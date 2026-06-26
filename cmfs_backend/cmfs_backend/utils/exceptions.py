@@ -1,7 +1,16 @@
 from rest_framework.views import exception_handler
+from rest_framework.response import Response
+from django_ratelimit.exceptions import Ratelimited
 
 
 def custom_exception_handler(exc, context):
+    # Handle django-ratelimit's Ratelimited exception → clean 429 JSON
+    if isinstance(exc, Ratelimited):
+        return Response(
+            {'error': 'Too many requests. Please try again later.', 'code': 'rate_limit_exceeded'},
+            status=429
+        )
+
     response = exception_handler(exc, context)
 
     if response is not None:
