@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'django_q',
+    'django_ratelimit',
     # Local apps
     'auth_app',
     'conventions',
@@ -42,6 +43,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'auth_app.middleware.JWTAuthMiddleware',
     'cmfs_backend.middleware.csp.CSPMiddleware',
 ]
 
@@ -113,6 +115,16 @@ Q_CLUSTER = {
     'bulk': 10,
     'orm': 'default',
 }
+
+# Rate limiting
+RATELIMIT_USE_CACHE = 'default'
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    }
+}
+SILENCED_SYSTEM_CHECKS = ['django_ratelimit.E003', 'django_ratelimit.W001']
+#silencces the error caused by django, it doesn't allow  locmem.LocMemCache to work in production but works in development
 
 # Email
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
