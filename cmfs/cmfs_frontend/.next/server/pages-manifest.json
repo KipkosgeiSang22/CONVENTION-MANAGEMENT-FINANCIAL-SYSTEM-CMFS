@@ -1,0 +1,13 @@
+{
+  "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
+  "/_document": "pages/_document.js",
+  "/delegates/manual": "pages/delegates/manual.js",
+  "/users": "pages/users.js",
+  "/delegates": "pages/delegates.js",
+  "/dashboard": "pages/dashboard.js",
+  "/delegates/[delegateId]": "pages/delegates/[delegateId].js",
+  "/budget": "pages/budget.js",
+  "/conventions/[id]": "pages/conventions/[id].js",
+  "/conventions": "pages/conventions.js"
+}

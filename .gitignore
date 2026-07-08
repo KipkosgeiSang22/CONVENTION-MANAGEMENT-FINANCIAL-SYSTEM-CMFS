@@ -15,4 +15,28 @@ __pycache__/
 
 # OS files
 .DS_Store
-Thumbs.db
+Thumbs.db# Unrelated projects/scripts — not part of cmfs
+venv/
+cmfs.zip
+cmfs backup/
+app.py
+check.py
+checkcp311_win_amd64.pyx
+event_extraction_app/
+inn.py
+inputs.py
+learn.py
+neuron.py
+predictor.py
+soc-export-app/
+web 2/
+
+# Build artifacts / dependencies
+__pycache__/
+*.pyc
+node_modules/
+.next/
+
+# Secrets — never commit these
+*.env
+.env.local
