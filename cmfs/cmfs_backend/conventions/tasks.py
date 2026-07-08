@@ -19,6 +19,7 @@ import logging
 from datetime import date
 
 from django.utils import timezone as dj_tz
+from django_q.tasks import async_task
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def auto_transition_convention_status():
 
     # OPEN → ACTIVE on start_date
     open_conventions = Convention.objects.filter(
-        status__in=(Convention.STATUS_OPEN, Convention.STATUS_DRAFT),
+        status__in=(Convention.STATUS_OPEN),
         start_date__lte=today,
     )
     for conv in open_conventions:
@@ -54,9 +55,9 @@ def auto_transition_convention_status():
         conv.save(update_fields=['status', 'started_at'])
         transitioned.append(f'ACTIVATED: {conv.name} (id={conv.id})')
         try:
-            send_convention_started_notification(conv.id)
+            async_task('conventions.tasks.send_convention_started_notification', conv.id)
         except Exception as e:
-            logger.error(f'Error sending started notification for conv {conv.id}: {e}')
+            logger.error(f'Error queuing started notification for conv {conv.id}: {e}')
 
     # ACTIVE → ENDED on end_date
     active_conventions = Convention.objects.filter(
@@ -70,9 +71,9 @@ def auto_transition_convention_status():
         conv.save(update_fields=['status', 'ended_at', 'is_registration_open'])
         transitioned.append(f'ENDED: {conv.name} (id={conv.id})')
         try:
-            send_convention_ended_notification(conv.id)
+            async_task('conventions.tasks.send_convention_ended_notification', conv.id)
         except Exception as e:
-            logger.error(f'Error sending ended notification for conv {conv.id}: {e}')
+            logger.error(f'Error queuing ended notification for conv {conv.id}: {e}')
 
     if transitioned:
         logger.info('auto_transition_convention_status: ' + '; '.join(transitioned))
@@ -90,9 +91,6 @@ def send_convention_published_notifications(convention_id: int):
     Sends invitation emails to all heads assigned to convention units.
     """
     from .models import Convention, ConventionUnit
-    from auth_app.models import User
-    from auth_app.emails import send_invitation_email
-    from django.conf import settings
 
     try:
         convention = Convention.objects.prefetch_related('units').get(pk=convention_id)
@@ -102,12 +100,16 @@ def send_convention_published_notifications(convention_id: int):
 
     heads = _get_convention_head_users(convention)
     for head in heads:
+        if not head.setup_token:
+            # Already set up — nothing new to invite them to; the started/
+            # ended notifications below are what keeps them informed.
+            logger.info(f'send_convention_published_notifications: {head.email} already set up, skipping')
+            continue
         try:
-            setup_url = f"{settings.FRONTEND_URL}/auth/setup?token={head.setup_token}" if head.setup_token else settings.FRONTEND_URL
-            send_invitation_email(head, setup_url)
-            logger.info(f'Sent invitation to {head.email} for convention {convention.name}')
+            async_task('auth_app.emails.send_invitation_email', head.id)
+            logger.info(f'Queued invitation email to {head.email} for convention {convention.name}')
         except Exception as e:
-            logger.error(f'Failed to send invitation to head {head.email}: {e}')
+            logger.error(f'Failed to queue invitation to head {head.email}: {e}')
 
 
 def send_convention_started_notification(convention_id: int):
@@ -162,8 +164,13 @@ def send_convention_ended_notification(convention_id: int):
     _send_bulk_email(recipients, subject, body)
     logger.info(f'send_convention_ended_notification: sent to {len(recipients)} recipients')
 
-    # Stub: trigger M-Pesa reconciliation (Phase 7)
-    logger.info(f'TODO Phase 7: trigger M-Pesa reconciliation for convention {convention_id}')
+    # Registration just closed — run an immediate reconciliation pass rather
+    # than waiting for the 02:00 nightly cron (payments.tasks.reconcile_mpesa_payments).
+    try:
+        async_task('payments.tasks.reconcile_mpesa_payments')
+        logger.info(f'send_convention_ended_notification: queued reconcile_mpesa_payments for convention {convention_id}')
+    except Exception as e:
+        logger.error(f'send_convention_ended_notification: failed to queue reconciliation: {e}')
 
 
 def generate_opening_day_reports(convention_id: int, triggered_by: int = None):
@@ -275,17 +282,18 @@ def _get_convention_recipient_emails(convention) -> list:
 
 
 def _send_bulk_email(recipients: list, subject: str, body: str):
-    """Send an email to multiple recipients via Resend."""
+    """Send an email to multiple recipients via Resend, retrying each send up to 3 times."""
     if not recipients:
         return
 
     import resend
     from django.conf import settings
+    from cmfs_backend.utils.task_retry import run_with_retries
 
     resend.api_key = settings.RESEND_API_KEY
     FROM = getattr(settings, 'RESEND_FROM_EMAIL', 'noreply@kscf.or.ke')
 
-    for email in recipients:
+    def _send_one(email):
         try:
             resend.Emails.send({
                 'from': FROM,
@@ -293,5 +301,10 @@ def _send_bulk_email(recipients: list, subject: str, body: str):
                 'subject': subject,
                 'text': body,
             })
+            return True
         except Exception as e:
             logger.error(f'_send_bulk_email: failed to send to {email}: {e}')
+            return False
+
+    for email in recipients:
+        run_with_retries(_send_one, email, task_name=f'bulk_email:{subject}')

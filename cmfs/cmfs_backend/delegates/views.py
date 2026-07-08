@@ -8,6 +8,7 @@ Endpoints:
   GET  /api/delegates/registration-status/<pk>/   — "Awaiting payment" polling (public)
   POST /api/delegates/manual/                     — Budget Creator manual registration
   GET  /api/delegates/{delegate_id}/              — delegate status page (public, via email link)
+  GET  /api/delegates/{delegate_id}/qr/            — direct QR download (public, TEMP fallback — see Phase 7 addendum)
   GET  /api/units/{unit_id}/delegates/            — Budget Creator delegate list
   GET  /api/units/{unit_id}/delegates/summary/    — County Head summary counts
 """
@@ -270,6 +271,83 @@ class DelegateDetailView(APIView):
             return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
 
         return Response({'delegate': DelegateSerializer(delegate).data})
+
+
+# ── Direct QR download — TEMPORARY fallback while Resend isn't configured ───────
+#
+# PHASE 7 ADDENDUM: the "real" path is delegates.tasks.on_payment_confirmed,
+# which queues QR generation + a confirmation email with it attached via
+# Django Q2. That requires both a running Q2 cluster (`python manage.py
+# qcluster`) and a working RESEND_API_KEY. Neither may be available yet
+# (e.g. local dev with no mail provider), so this endpoint generates the QR
+# synchronously, on request, bypassing Q2 and Resend entirely, and hands
+# back the PNG as a direct download. Delete this view + its URL entry once
+# email delivery is confirmed working end-to-end — the QR is already
+# emailed automatically and doesn't need a manual download link then.
+
+class DelegateQrCodeView(APIView):
+    """
+    GET /api/delegates/{delegate_id}/qr/ — public, no auth.
+    Generates the QR on the spot if it doesn't exist yet, then serves it
+    as a direct download (Content-Disposition: attachment).
+    """
+    permission_classes = []
+
+    def get(self, request, delegate_id):
+        try:
+            delegate = Delegate.objects.get(delegate_id=delegate_id)
+        except Delegate.DoesNotExist:
+            return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
+
+        if delegate.registration_status != 'active':
+            return Response(
+                {'error': 'Your QR code will be available once your first payment is confirmed.', 'code': 'not_ready'},
+                status=400,
+            )
+
+        from .qr import qr_absolute_path, _generate_qr_code_once
+        from django.http import FileResponse
+
+        path = qr_absolute_path(delegate)
+        if not path.exists():
+            if not _generate_qr_code_once(delegate.id):
+                return Response(
+                    {'error': 'Could not generate the QR code right now. Please try again shortly.', 'code': 'generation_failed'},
+                    status=500,
+                )
+
+        return FileResponse(
+            open(path, 'rb'), as_attachment=True, filename=f'{delegate.delegate_id}.png', content_type='image/png',
+        )
+
+
+# ── Payment reminder (Budget Creator action, Phase 7) ───────────────────────────
+
+class SendPaymentReminderView(APIView):
+    """POST /api/delegates/{delegate_id}/send-reminder/ — Budget Creator or above."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, delegate_id):
+        if not IsBudgetCreatorOrAbove().has_permission(request, self):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        try:
+            delegate = Delegate.objects.get(delegate_id=delegate_id)
+        except Delegate.DoesNotExist:
+            return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
+
+        if delegate.balance_owed <= 0:
+            return Response(
+                {'error': 'This delegate has no outstanding balance.', 'code': 'no_balance'}, status=400,
+            )
+
+        async_task('delegates.tasks.send_payment_reminder_task', delegate.id)
+        audit_log(
+            user=request.auth_user, action='payment_reminder_sent',
+            detail=f'Payment reminder queued for delegate {delegate.delegate_id}',
+            ip=get_client_ip(request),
+        )
+        return Response({'message': f'Reminder queued for {delegate.full_name}.'})
 
 
 # ── Staff delegate list / summary ───────────────────────────────────────────────

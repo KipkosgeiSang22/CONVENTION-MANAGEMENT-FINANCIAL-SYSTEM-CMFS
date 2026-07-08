@@ -14,6 +14,7 @@ import useAuth from '../../lib/useAuth';
 import InactivityGuard from '../../components/InactivityGuard';
 import {
   getUnitDelegates, getUnitDelegatesSummary, CATEGORY_LABELS, PAYMENT_STATUS_STYLES, fmtKES,
+  sendPaymentReminder,
 } from '../../lib/delegates';
 import { recordCashPayment } from '../../lib/payments';
 import { getMyUnits } from '../../lib/budget';
@@ -32,6 +33,7 @@ export default function DelegatesPage() {
   const [delegates, setDelegates] = useState([]);
   const [summary, setSummary] = useState(null);
   const [payingId, setPayingId] = useState(null);
+  const [remindingId, setRemindingId] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -82,6 +84,17 @@ export default function DelegatesPage() {
       refreshAll();
     } else {
       alert(res.data?.error?.error || res.data?.error || 'Could not record payment.');
+    }
+  }
+
+  async function handleSendReminder(delegate) {
+    setRemindingId(delegate.id);
+    const res = await sendPaymentReminder(delegate.delegate_id);
+    setRemindingId(null);
+    if (res.ok) {
+      alert(`Reminder queued for ${delegate.full_name}.`);
+    } else {
+      alert(res.data?.error?.error || res.data?.error || 'Could not queue the reminder.');
     }
   }
 
@@ -170,10 +183,16 @@ export default function DelegatesPage() {
                         {canRecordPayment && (
                           <td className="px-4 py-2.5 text-right">
                             {d.balance_owed > 0 && (
-                              <button onClick={() => handleRecordCash(d)} disabled={payingId === d.id}
-                                className="text-xs text-blue-600 hover:underline disabled:opacity-50">
-                                {payingId === d.id ? 'Recording…' : 'Record Cash Payment'}
-                              </button>
+                              <div className="flex items-center justify-end gap-3">
+                                <button onClick={() => handleRecordCash(d)} disabled={payingId === d.id}
+                                  className="text-xs text-blue-600 hover:underline disabled:opacity-50">
+                                  {payingId === d.id ? 'Recording…' : 'Record Cash Payment'}
+                                </button>
+                                <button onClick={() => handleSendReminder(d)} disabled={remindingId === d.id}
+                                  className="text-xs text-gray-500 hover:underline disabled:opacity-50">
+                                  {remindingId === d.id ? 'Sending…' : 'Send Reminder'}
+                                </button>
+                              </div>
                             )}
                           </td>
                         )}

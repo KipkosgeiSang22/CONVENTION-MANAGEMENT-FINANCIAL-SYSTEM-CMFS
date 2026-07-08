@@ -11,6 +11,8 @@
  *  - Role filter dropdown
  *  - Invite button → opens InviteUserModal
  *  - Invalidate Sessions button (Super Admin only)
+ *  - Reset TOTP button (Super Admin only) — wipes the target's authenticator
+ *    and queues a fresh setup email, after the admin confirms their own code
  *  - Delete user button (Super Admin only)
  */
 
@@ -19,7 +21,7 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { getUser, logout, refreshToken } from '../../lib/auth';
 import { api } from '../../lib/api';
-import { listUsers, invalidateSessions, deleteUser, ROLE_LABELS } from '../../lib/users';
+import { listUsers, invalidateSessions, deleteUser, resetUserTotp, ROLE_LABELS } from '../../lib/users';
 import UserStatusBadge from '../../components/UserStatusBadge';
 import InviteUserModal from '../../components/InviteUserModal';
 import InactivityGuard from '../../components/InactivityGuard';
@@ -41,6 +43,9 @@ export default function UsersPage() {
   const [counties, setCounties]     = useState([]);
   const [regions, setRegions]       = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(null); // user object to delete
+  const [confirmTotpReset, setConfirmTotpReset] = useState(null); // user object to reset TOTP for
+  const [totpCodeInput, setTotpCodeInput] = useState(''); // admin's own TOTP code, entered in the reset modal
+  const [totpResetting, setTotpResetting] = useState(false);
 
   // ── Auth check ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -109,6 +114,20 @@ export default function UsersPage() {
     setConfirmDelete(null);
     if (!ok) { setActionError(apiErr); return; }
     setActionMsg(data.message || 'User deleted.');
+    loadUsers();
+  }
+
+  async function handleResetTotp() {
+    if (!confirmTotpReset || !totpCodeInput) return;
+    setTotpResetting(true);
+    setActionError('');
+    setActionMsg('');
+    const { ok, data, error: apiErr } = await resetUserTotp(confirmTotpReset.id, totpCodeInput);
+    setTotpResetting(false);
+    setTotpCodeInput('');
+    setConfirmTotpReset(null);
+    if (!ok) { setActionError(apiErr); return; }
+    setActionMsg(data.message || 'TOTP reset and setup email sent.');
     loadUsers();
   }
 
@@ -251,6 +270,13 @@ export default function UsersPage() {
                               Invalidate Sessions
                             </button>
                             <button
+                              onClick={() => { setConfirmTotpReset(u); setTotpCodeInput(''); setActionMsg(''); setActionError(''); }}
+                              className="text-xs text-orange-600 hover:underline whitespace-nowrap"
+                              disabled={u.id === user.id}
+                            >
+                              Reset TOTP
+                            </button>
+                            <button
                               onClick={() => { setConfirmDelete(u); setActionMsg(''); setActionError(''); }}
                               className="text-xs text-red-500 hover:underline"
                               disabled={u.id === user.id}
@@ -322,6 +348,44 @@ export default function UsersPage() {
                 className="flex-1 bg-red-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-red-700"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Reset TOTP confirmation modal */}
+      {confirmTotpReset && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
+            <p className="text-4xl mb-3">🔐</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Reset TOTP for {confirmTotpReset.full_name}?</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              This wipes their authenticator and recovery codes and logs them out everywhere.
+              They'll get a new setup link by email.
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="Your 6-digit TOTP code"
+              value={totpCodeInput}
+              onChange={e => setTotpCodeInput(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-center tracking-widest mb-4 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              autoFocus
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setConfirmTotpReset(null); setTotpCodeInput(''); }}
+                className="flex-1 border border-gray-300 text-gray-700 rounded-lg py-2 text-sm font-medium hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResetTotp}
+                disabled={totpResetting || totpCodeInput.length !== 6}
+                className="flex-1 bg-orange-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-orange-700 disabled:opacity-50"
+              >
+                {totpResetting ? 'Resetting…' : 'Reset TOTP'}
               </button>
             </div>
           </div>

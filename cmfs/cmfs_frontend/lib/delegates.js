@@ -32,6 +32,31 @@ export async function getUnitDelegatesSummary(unitId) {
   return api.get(`/api/units/${unitId}/delegates/summary/`);
 }
 
+/** POST /api/delegates/{delegateId}/send-reminder/ — Budget Creator or above. */
+export async function sendPaymentReminder(delegateId) {
+  return api.post(`/api/delegates/${delegateId}/send-reminder/`, {});
+}
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+/** Builds the absolute URL for a delegate's QR code PNG (qr_code_path is MEDIA_URL-relative, e.g. "/media/qr_codes/KER-STU-2026-0042.png"). */
+export function getQrCodeUrl(delegate) {
+  if (!delegate?.qr_code_path) return null;
+  return `${API_BASE_URL}${delegate.qr_code_path}`;
+}
+
+/**
+ * TEMPORARY fallback while Resend isn't configured (Phase 7 addendum):
+ * hits GET /api/delegates/{delegateId}/qr/, which generates the QR on
+ * the spot (bypassing Django Q2 + email entirely) and serves it as a
+ * direct download. Remove once email delivery is confirmed working —
+ * the QR is already emailed automatically at that point.
+ */
+export function getQrDownloadUrl(delegateId) {
+  if (!delegateId) return null;
+  return `${API_BASE_URL}/api/delegates/${delegateId}/qr/`;
+}
+
 export const CATEGORY_LABELS = {
   student: 'Student',
   kessat: 'Kessat',

@@ -22,6 +22,7 @@ from django_ratelimit.decorators import ratelimit
 from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from django_q.tasks import async_task
 
 from auth_app.utils import verify_totp_code, get_client_ip
 from auth_app.audit import log as audit_log
@@ -264,8 +265,8 @@ class ConventionPublishView(APIView):
             ip=get_client_ip(request),
         )
 
-        # Schedule background task: send invitation emails to all assigned heads
-        tasks.send_convention_published_notifications(convention.id)
+        # Queue background task: send invitation emails to all assigned heads
+        async_task('conventions.tasks.send_convention_published_notifications', convention.id)
 
         return Response({
             'message': f'Convention "{convention.name}" is now OPEN. Scope and fees are permanently locked.',
@@ -311,7 +312,7 @@ class ConventionActivateView(APIView):
             ip=get_client_ip(request),
         )
 
-        tasks.send_convention_started_notification(convention.id)
+        async_task('conventions.tasks.send_convention_started_notification', convention.id)
 
         return Response({
             'message': f'Convention "{convention.name}" is now ACTIVE. Gate module enabled.',
@@ -358,7 +359,7 @@ class ConventionEndView(APIView):
             ip=get_client_ip(request),
         )
 
-        tasks.send_convention_ended_notification(convention.id)
+        async_task('conventions.tasks.send_convention_ended_notification', convention.id)
 
         return Response({
             'message': f'Convention "{convention.name}" has ENDED. Registration closed, gate deactivated.',

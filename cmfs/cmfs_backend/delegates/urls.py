@@ -13,6 +13,8 @@ urlpatterns = [
     path('registration-status/<int:pk>/', views.RegistrationStatusView.as_view(), name='delegate-registration-status'),
     path('manual/', views.ManualRegistrationView.as_view(), name='delegate-manual-register'),
     path('<str:delegate_id>/payments/', DelegatePaymentsListView.as_view(), name='delegate-payments'),
+    path('<str:delegate_id>/send-reminder/', views.SendPaymentReminderView.as_view(), name='delegate-send-reminder'),
+    path('<str:delegate_id>/qr/', views.DelegateQrCodeView.as_view(), name='delegate-qr-download'),
     path('<str:delegate_id>/', views.DelegateDetailView.as_view(), name='delegate-detail'),
 ]
 

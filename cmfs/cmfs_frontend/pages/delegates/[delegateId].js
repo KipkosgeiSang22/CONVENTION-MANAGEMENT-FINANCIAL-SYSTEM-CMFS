@@ -1,16 +1,15 @@
 /**
  * FILE: cmfs/cmfs_frontend/pages/delegates/[delegateId].js
- * ACTION: CREATE (Phase 6)
+ * ACTION: CREATE (Phase 6) / MODIFY (Phase 7 — QR code display)
  *
  * Public — no login required. `delegateId` is the human-readable code
  * (e.g. KER-STU-2026-0042), reached via the confirmation email link.
- * QR code display arrives in Phase 7 (qr_code_path exists on the model
- * but isn't rendered here yet).
+ * Shows the QR code inline once qr_code_path is set (Phase 7).
  */
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-import { getDelegate, CATEGORY_LABELS, PAYMENT_STATUS_STYLES, fmtKES } from '../../lib/delegates';
+import { getDelegate, CATEGORY_LABELS, PAYMENT_STATUS_STYLES, fmtKES, getQrCodeUrl, getQrDownloadUrl } from '../../lib/delegates';
 
 export default function DelegateStatusPage() {
   const router = useRouter();
@@ -76,6 +75,26 @@ export default function DelegateStatusPage() {
             </span>
           </div>
         </div>
+
+        {delegate.registration_status === 'active' && (
+          <div className="mt-5 pt-5 border-t border-gray-100 text-center">
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-2">Entry QR Code</p>
+            {delegate.qr_code_path && (
+              <img
+                src={getQrCodeUrl(delegate)}
+                alt={`QR code for ${delegate.delegate_id}`}
+                className="mx-auto w-40 h-40 border border-gray-200 rounded-lg mb-3"
+              />
+            )}
+            <a
+              href={getQrDownloadUrl(delegate.delegate_id)}
+              className="inline-block bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700"
+            >
+              Download my QR Code
+            </a>
+            <p className="text-xs text-gray-400 mt-2">Present this at the gate — printed or on your phone.</p>
+          </div>
+        )}
 
         {delegate.balance_owed > 0 && (
           <p className="mt-5 text-xs text-gray-400 text-center">

@@ -81,6 +81,22 @@ export async function invalidateSessions(userId) {
   return { ok: true, data: res.data, error: null };
 }
 
+/**
+ * Force-reset a user's TOTP (Super Admin only). Wipes their existing
+ * authenticator + recovery codes and queues a fresh setup-link email.
+ * Requires the *calling* Super Admin's own current TOTP code, since this
+ * is a destructive action on someone else's account.
+ * @param {number} userId
+ * @param {string} totpCode - the Super Admin's own 6-digit TOTP code
+ */
+export async function resetUserTotp(userId, totpCode) {
+  const res = await api.post('/api/auth/totp/admin-reset/', { user_id: userId, totp_code: totpCode });
+  if (!res.ok) {
+    return { ok: false, data: null, error: res.data?.error || 'Failed to reset TOTP.' };
+  }
+  return { ok: true, data: res.data, error: null };
+}
+
 // ── Role metadata ──────────────────────────────────────────────────────────────
 
 /** Human-readable label for each backend role value. */

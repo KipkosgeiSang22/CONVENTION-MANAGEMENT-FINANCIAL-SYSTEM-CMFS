@@ -1,5 +1,6 @@
 from django.urls import path, include
 from .views import HealthCheckView
+from .email_preview import EmailPreviewView
 from auth_app.views import (
     InviteUserView,
     InvalidateSessionsView,
@@ -39,4 +40,8 @@ urlpatterns = [
 
     # Payments (Phase 6)
     path('payments/', include('payments.urls')),
+
+    # Email preview (Phase 7, DEBUG only)
+    path('email-preview/', EmailPreviewView.as_view(), name='email-preview-list'),
+    path('email-preview/<str:template_name>/', EmailPreviewView.as_view(), name='email-preview-detail'),
 ]

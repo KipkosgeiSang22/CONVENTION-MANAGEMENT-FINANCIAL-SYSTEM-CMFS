@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { getRegistrationStatus, fmtKES } from '../../../lib/delegates';
+import { getRegistrationStatus, fmtKES, getQrDownloadUrl } from '../../../lib/delegates';
 import { initiateMpesa } from '../../../lib/payments';
 
 const POLL_MS = 4000;
@@ -77,6 +77,13 @@ export default function RegistrationStatusPage() {
         <h1 className="text-xl font-bold text-gray-900 mb-1">Registration Confirmed!</h1>
         <p className="text-gray-500 mb-4">Delegate ID: <span className="font-mono font-semibold">{status.delegate_id}</span></p>
         <p className="text-sm text-gray-500 mb-6">A confirmation email with your QR code is on its way.</p>
+        <a
+          href={getQrDownloadUrl(status.delegate_id)}
+          className="inline-block bg-blue-600 text-white rounded-lg px-5 py-2 text-sm font-medium hover:bg-blue-700 mb-3"
+        >
+          Download my QR Code
+        </a>
+        <p className="text-xs text-gray-400 mb-4">(Use this if the email hasn't arrived yet.)</p>
         <Link href={`/delegates/${status.delegate_id}`} className="text-blue-600 text-sm font-medium hover:underline">
           View delegate status →
         </Link>

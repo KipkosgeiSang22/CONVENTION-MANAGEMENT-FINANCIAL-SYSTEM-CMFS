@@ -18,7 +18,7 @@ from auth_app.utils import (
     generate_recovery_codes, hash_recovery_code, verify_recovery_code,
     generate_setup_token, get_client_ip,
 )
-from auth_app.emails import send_invitation_email, send_password_reset_email
+from django_q.tasks import async_task
 from auth_app.audit import log
 from auth_app.permissions import (
     IsSuperAdmin, IsAuthenticated, IsCountyHeadOrAbove,
@@ -349,8 +349,7 @@ class AdminTOTPResetView(APIView):
 
         RecoveryCode.objects.filter(user=target).delete()
 
-        setup_url = f"{settings.FRONTEND_URL}/auth/setup?token={setup_token}"
-        send_invitation_email(target, setup_url)
+        async_task('auth_app.emails.send_invitation_email', target.id)
         log(user=admin, action='admin_totp_reset', detail=f'Reset TOTP for user id={target.id}', ip=ip)
         return Response({'message': f'TOTP reset for {target.full_name}. New setup email sent.'})
 
@@ -464,8 +463,8 @@ class PasswordResetRequestView(APIView):
         user.setup_token_expires_at = dj_tz.now() + timedelta(hours=1)
         user.save(update_fields=['setup_token', 'setup_token_expires_at'])
 
-        reset_url = f"{settings.FRONTEND_URL}/auth/reset-password?token={reset_token}"
-        send_password_reset_email(user, reset_url)
+
+        async_task('auth_app.emails.send_password_reset_email', user.id)
         log(user=user, action='password_reset_requested', ip=ip)
         return Response({'message': 'If that email is registered, a reset link has been sent.'})
 
@@ -639,7 +638,7 @@ class InviteUserView(APIView):
         )
 
         setup_url = f"{settings.FRONTEND_URL}/auth/setup?token={setup_token}"
-        send_invitation_email(user, setup_url)
+        async_task('auth_app.emails.send_invitation_email', user.id)
         log(
             user=caller,
             action='user_invited',
