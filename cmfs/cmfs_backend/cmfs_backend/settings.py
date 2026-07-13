@@ -148,7 +148,7 @@ JWT_ACCESS_TOKEN_EXPIRY_MINUTES = 15
 JWT_REFRESH_TOKEN_EXPIRY_DAYS = 7
 
 # Frontend
-FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+FRONTEND_URL = config('FRONTEND_URL')
 
 CACHES = {
     'default': {
