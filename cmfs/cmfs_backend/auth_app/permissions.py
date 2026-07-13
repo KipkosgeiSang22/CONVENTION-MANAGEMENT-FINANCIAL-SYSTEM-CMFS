@@ -98,6 +98,17 @@ class IsFinanceViewerOrAbove(BasePermission):
         )
 
 
+class IsGateOfficialOrAbove(BasePermission):
+    """Gate Official, County Head, or above (Phase 8 — Gate Check-In)."""
+    ALLOWED = {'super_admin', 'national_head', 'regional_head', 'county_head', 'gate_official'}
+
+    def has_permission(self, request, view):
+        return (
+            request.auth_user is not None
+            and request.auth_user.role in self.ALLOWED
+        )
+
+
 # ── Invitation hierarchy ───────────────────────────────────────────────────────
 #
 # Maps each role to the set of roles it is allowed to invite via the API.
@@ -163,6 +174,26 @@ def user_can_access_region(user, region_id: int) -> bool:
     return False
 
 
+def _region_matches_unit(convention_unit, region_id) -> bool:
+    """
+    True if a ConventionUnit is directly in this region (a 'regional' unit
+    for this region), or — Option B — it's a 'county' unit whose county
+    belongs to this region. Mirrors user_can_view_convention.
+    """
+    if region_id is None:
+        return False
+    if convention_unit.scope_type == 'regional':
+        return convention_unit.scope_id == region_id
+    if convention_unit.scope_type == 'county':
+        from conventions.models import County
+        try:
+            county = County.objects.get(pk=convention_unit.scope_id)
+            return county.region_id == region_id
+        except County.DoesNotExist:
+            return False
+    return False
+
+
 def user_can_access_unit(user, convention_unit) -> bool:
     """
     Returns True if the user has access to the given ConventionUnit.
@@ -172,17 +203,21 @@ def user_can_access_unit(user, convention_unit) -> bool:
     if user.role == 'national_head':
         return True
     if user.role == 'regional_head':
-        if convention_unit.scope_type == 'county':
-            from conventions.models import County
-            try:
-                county = County.objects.get(pk=convention_unit.scope_id)
-                return county.region_id == user.region_id
-            except Exception:
-                return False
-        return convention_unit.scope_id == user.region_id
-    # County-level roles must belong to the same county.
-    if user.county_id is None:
-        return False
-    if convention_unit.scope_type == 'county':
-        return convention_unit.scope_id == user.county_id
+        return _region_matches_unit(convention_unit, user.region_id)
+
+    if user.role == 'county_head':
+        if user.county_id is None:
+            return False
+        return convention_unit.scope_type == 'county' and convention_unit.scope_id == user.county_id
+
+    if user.role in ('budget_creator', 'finance_viewer', 'gate_official'):
+        # These roles exist at county, regional, or national level and
+        # inherit scope from whoever invited them — check whichever id
+        # they actually carry, same as user_can_view_convention.
+        if user.county_id:
+            return convention_unit.scope_type == 'county' and convention_unit.scope_id == user.county_id
+        if user.region_id:
+            return _region_matches_unit(convention_unit, user.region_id)
+        return convention_unit.scope_type == 'national'
+
     return False

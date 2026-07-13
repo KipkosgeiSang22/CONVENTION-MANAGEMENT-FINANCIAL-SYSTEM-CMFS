@@ -44,6 +44,13 @@ export async function triggerOpeningDayReports(id) {
   return api.post(`/api/conventions/${id}/opening-day-reports/`, {});
 }
 
+// DEV/TESTING CONVENIENCE ONLY (Super Admin only, server-enforced) — generates
+// the full report set right now, at any convention status, without financial
+// close. See reports.views.DevGenerateReportsView.
+export async function generateReportsDev(id, reportType = 'final') {
+  return api.post(`/api/reports/dev-generate/${id}/`, { report_type: reportType });
+}
+
 export async function listCounties() {
   return api.get('/api/conventions/counties/');
 }

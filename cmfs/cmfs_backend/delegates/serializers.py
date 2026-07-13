@@ -4,11 +4,12 @@ ACTION: CREATE (Phase 6)
 """
 
 import re
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from auth_app.utils import normalize_kenyan_phone
 from conventions.models import County
-from .models import Delegate
+from .models import Delegate, WriteOff
 
 NAME_RE = re.compile(r'^[A-Za-z\s\-]{3,100}$')
 
@@ -61,6 +62,11 @@ class ManualRegistrationSerializer(PublicRegistrationSerializer):
     """POST /api/delegates/manual/ — Budget Creator only. Adds payment fields."""
     payment_method = serializers.ChoiceField(choices=['cash', 'mpesa'])
     amount_received_now = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    # Only required when the chosen county has more than one open convention
+    # covering it at once (e.g. its own county convention AND a regional
+    # convention that includes it) — the view tells the client to resubmit
+    # with this set in that case.
+    convention_id = serializers.IntegerField(required=False, allow_null=True)
 
 
 class DelegateSerializer(serializers.ModelSerializer):
@@ -69,6 +75,9 @@ class DelegateSerializer(serializers.ModelSerializer):
     fee_amount = serializers.SerializerMethodField()
     total_paid = serializers.SerializerMethodField()
     county_name = serializers.SerializerMethodField()
+    checked_in = serializers.SerializerMethodField()
+    checked_in_at = serializers.SerializerMethodField()
+    checked_in_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Delegate
@@ -77,6 +86,8 @@ class DelegateSerializer(serializers.ModelSerializer):
             'email', 'county_id', 'county_name', 'convention_id', 'registration_status',
             'qr_code_path', 'registration_date', 'registered_by_id',
             'balance_owed', 'payment_status', 'fee_amount', 'total_paid',
+            'chase_status', 'chase_requested_at',
+            'checked_in', 'checked_in_at', 'checked_in_by_name',
         ]
 
     def get_balance_owed(self, obj):
@@ -93,3 +104,39 @@ class DelegateSerializer(serializers.ModelSerializer):
 
     def get_county_name(self, obj):
         return obj.county.name
+
+    # Attendance (Phase 8) lives on gate.Attendance, a OneToOne on the far
+    # side — most delegates won't have a row yet (nobody's scanned them),
+    # so this has to tolerate a missing related object rather than assume
+    # obj.attendance exists.
+    def _attendance(self, obj):
+        try:
+            return obj.attendance
+        except ObjectDoesNotExist:
+            return None
+
+    def get_checked_in(self, obj):
+        attendance = self._attendance(obj)
+        return bool(attendance and attendance.checked_in)
+
+    def get_checked_in_at(self, obj):
+        attendance = self._attendance(obj)
+        return attendance.checked_in_at if attendance and attendance.checked_in else None
+
+    def get_checked_in_by_name(self, obj):
+        attendance = self._attendance(obj)
+        return attendance.checked_in_by_name if attendance and attendance.checked_in else ''
+
+
+class WriteOffSerializer(serializers.ModelSerializer):
+    delegate_full_name = serializers.CharField(source='delegate.full_name', read_only=True)
+    delegate_id_code = serializers.CharField(source='delegate.delegate_id', read_only=True)
+
+    class Meta:
+        model = WriteOff
+        fields = [
+            'id', 'delegate_id', 'delegate_full_name', 'delegate_id_code', 'convention_unit_id',
+            'amount_written_off', 'reason', 'written_off_by_id', 'written_off_by_name',
+            'written_off_at', 'totp_confirmed',
+        ]
+        read_only_fields = fields

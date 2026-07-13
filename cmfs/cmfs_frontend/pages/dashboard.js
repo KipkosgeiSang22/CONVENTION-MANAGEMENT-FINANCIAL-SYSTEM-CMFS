@@ -13,7 +13,9 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { getUser, logout, refreshToken } from '../lib/auth';
 import { api } from '../lib/api';
+import { getDashboard } from '../lib/dashboard';
 import InactivityGuard from '../components/InactivityGuard';
+import DashboardWidgets from '../components/DashboardWidgets';
 
 const NAV_CARDS = [
   {
@@ -44,6 +46,27 @@ const NAV_CARDS = [
     icon: '🧑‍🤝‍🧑',
     roles: ['super_admin', 'national_head', 'regional_head', 'county_head', 'budget_creator', 'finance_viewer'],
   },
+  {
+    title: 'Gate Check-In',
+    description: 'Scan delegate QR codes, check in attendees, and collect balances at the gate.',
+    href: '/gate',
+    icon: '🚪',
+    roles: ['super_admin', 'national_head', 'regional_head', 'county_head', 'gate_official'],
+  },
+  {
+    title: 'Audit Log',
+    description: 'Search and review every recorded system action, filterable by user, action, and date.',
+    href: '/audit-logs',
+    icon: '🛡️',
+    roles: ['super_admin'],
+  },
+  {
+    title: 'Annual Summary',
+    description: 'Year-on-year totals across every convention, per-county surplus/deficit, and collection efficiency.',
+    href: '/annual-summary',
+    icon: '📅',
+    roles: ['super_admin'],
+  },
 ];
 
 /** Build a scope context string from the user object. */
@@ -62,6 +85,8 @@ export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser]   = useState(null);
   const [error, setError] = useState('');
+  const [dashData, setDashData] = useState(null);
+  const [dashLoading, setDashLoading] = useState(true);
 
   useEffect(() => {
     async function init() {
@@ -91,6 +116,16 @@ export default function DashboardPage() {
 
     init().finally(() => clearTimeout(fallback));
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setDashLoading(true);
+    getDashboard()
+      .then(res => { if (!cancelled && res.ok) setDashData(res.data); })
+      .finally(() => { if (!cancelled) setDashLoading(false); });
+    return () => { cancelled = true; };
+  }, [user]);
 
   async function handleLogout() {
     await logout();
@@ -161,6 +196,17 @@ export default function DashboardPage() {
                 </p>
               )}
             </div>
+          </div>
+
+          {/* Live dashboard data — role-adaptive, see DashboardWidgets */}
+          <div className="mb-8">
+            {dashLoading ? (
+              <div className="bg-white border border-gray-200 rounded-lg p-8 flex justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600" />
+              </div>
+            ) : (
+              <DashboardWidgets data={dashData} />
+            )}
           </div>
 
           {/* Nav cards */}

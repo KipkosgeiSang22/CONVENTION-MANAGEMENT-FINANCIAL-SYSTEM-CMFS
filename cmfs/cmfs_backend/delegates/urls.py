@@ -15,6 +15,9 @@ urlpatterns = [
     path('<str:delegate_id>/payments/', DelegatePaymentsListView.as_view(), name='delegate-payments'),
     path('<str:delegate_id>/send-reminder/', views.SendPaymentReminderView.as_view(), name='delegate-send-reminder'),
     path('<str:delegate_id>/qr/', views.DelegateQrCodeView.as_view(), name='delegate-qr-download'),
+    path('<str:delegate_id>/chase/', views.ChasePaymentView.as_view(), name='delegate-chase'),
+    path('<str:delegate_id>/write-off/', views.WriteOffView.as_view(), name='delegate-write-off'),
+    path('<str:delegate_id>/delete/', views.DeleteDelegateView.as_view(), name='delegate-delete'),
     path('<str:delegate_id>/', views.DelegateDetailView.as_view(), name='delegate-detail'),
 ]
 

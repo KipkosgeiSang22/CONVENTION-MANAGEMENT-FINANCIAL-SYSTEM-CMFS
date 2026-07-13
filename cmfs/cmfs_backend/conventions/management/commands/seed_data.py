@@ -130,6 +130,10 @@ PRELOADED_EXPENSE_ITEMS = [
     ("Sunday School Speakers", "SPEAK", "persons"),
     ("Praise & Worship Team", "SPEAK", "persons"),
     ("Envelopes", "SPEAK", "pieces"),
+    # Workers & Appreciation
+    ("Organizing Committee Appreciation", "APPR", "persons"),
+    ("Convention Workers Appreciation", "APPR", "persons"),
+    ("Volunteers Appreciation", "APPR", "persons"),
     # Security & Admin
     ("Police", "SECAD", "persons"),
     ("Watchmen", "SECAD", "persons"),

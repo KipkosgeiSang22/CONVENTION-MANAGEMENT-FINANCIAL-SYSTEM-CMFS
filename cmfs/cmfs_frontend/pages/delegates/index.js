@@ -14,7 +14,7 @@ import useAuth from '../../lib/useAuth';
 import InactivityGuard from '../../components/InactivityGuard';
 import {
   getUnitDelegates, getUnitDelegatesSummary, CATEGORY_LABELS, PAYMENT_STATUS_STYLES, fmtKES,
-  sendPaymentReminder,
+  sendPaymentReminder, deleteDelegate, firstErrorMessage,
 } from '../../lib/delegates';
 import { recordCashPayment } from '../../lib/payments';
 import { getMyUnits } from '../../lib/budget';
@@ -34,6 +34,8 @@ export default function DelegatesPage() {
   const [summary, setSummary] = useState(null);
   const [payingId, setPayingId] = useState(null);
   const [remindingId, setRemindingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [attendanceFilter, setAttendanceFilter] = useState('all'); // all | attended | not_attended
 
   useEffect(() => {
     if (!user) return;
@@ -98,6 +100,27 @@ export default function DelegatesPage() {
     }
   }
 
+  async function handleDelete(delegate) {
+    if (delegate.checked_in) {
+      alert(`${delegate.full_name} has already checked in at the gate and can't be deleted.`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${delegate.full_name} (${delegate.delegate_id || 'pending'})? This permanently removes their registration and payment records. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingId(delegate.id);
+    const res = await deleteDelegate(delegate.delegate_id || delegate.id);
+    setDeletingId(null);
+    if (res.ok) {
+      setDelegates(prev => prev.filter(d => d.id !== delegate.id));
+      refreshAll();
+    } else {
+      alert(firstErrorMessage(res.data, 'Could not delete this delegate.'));
+    }
+  }
+
   if (authLoading || !user || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -153,8 +176,31 @@ export default function DelegatesPage() {
 
           {selectedUnitId && summary && <SummaryCards summary={summary} />}
 
+          {selectedUnitId && delegates.length > 0 && (
+            <div className="flex items-center gap-2 mt-6">
+              <span className="text-xs text-gray-500">Attendance:</span>
+              {[
+                { key: 'all', label: `All (${delegates.length})` },
+                { key: 'attended', label: `Attended (${delegates.filter(d => d.checked_in).length})` },
+                { key: 'not_attended', label: `Not Attended (${delegates.filter(d => !d.checked_in).length})` },
+              ].map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setAttendanceFilter(f.key)}
+                  className={`text-xs px-3 py-1.5 rounded-full border ${
+                    attendanceFilter === f.key
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {selectedUnitId && (
-            <div className="bg-white border border-gray-200 rounded-lg mt-6 overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-lg mt-3 overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
                   <tr>
@@ -163,11 +209,18 @@ export default function DelegatesPage() {
                     <th className="text-left px-4 py-2">Category</th>
                     <th className="text-right px-4 py-2">Balance</th>
                     <th className="text-left px-4 py-2">Status</th>
+                    <th className="text-left px-4 py-2">Attendance</th>
                     {canRecordPayment && <th className="px-4 py-2"></th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {delegates.map(d => {
+                  {delegates
+                    .filter(d => {
+                      if (attendanceFilter === 'attended') return !!d.checked_in;
+                      if (attendanceFilter === 'not_attended') return !d.checked_in;
+                      return true;
+                    })
+                    .map(d => {
                     const badge = PAYMENT_STATUS_STYLES[d.payment_status] || PAYMENT_STATUS_STYLES.PENDING;
                     return (
                       <tr key={d.id} className="border-t border-gray-100">
@@ -180,20 +233,44 @@ export default function DelegatesPage() {
                             {badge.label}
                           </span>
                         </td>
+                        <td className="px-4 py-2.5">
+                          {d.checked_in ? (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"
+                              title={d.checked_in_at ? `${new Date(d.checked_in_at).toLocaleString('en-KE')}${d.checked_in_by_name ? ' · ' + d.checked_in_by_name : ''}` : ''}
+                            >
+                              ✓ Checked In
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                              Not Yet
+                            </span>
+                          )}
+                        </td>
                         {canRecordPayment && (
                           <td className="px-4 py-2.5 text-right">
-                            {d.balance_owed > 0 && (
-                              <div className="flex items-center justify-end gap-3">
-                                <button onClick={() => handleRecordCash(d)} disabled={payingId === d.id}
-                                  className="text-xs text-blue-600 hover:underline disabled:opacity-50">
-                                  {payingId === d.id ? 'Recording…' : 'Record Cash Payment'}
-                                </button>
-                                <button onClick={() => handleSendReminder(d)} disabled={remindingId === d.id}
-                                  className="text-xs text-gray-500 hover:underline disabled:opacity-50">
-                                  {remindingId === d.id ? 'Sending…' : 'Send Reminder'}
-                                </button>
-                              </div>
-                            )}
+                            <div className="flex items-center justify-end gap-3">
+                              {d.balance_owed > 0 && (
+                                <>
+                                  <button onClick={() => handleRecordCash(d)} disabled={payingId === d.id}
+                                    className="text-xs text-blue-600 hover:underline disabled:opacity-50">
+                                    {payingId === d.id ? 'Recording…' : 'Record Cash Payment'}
+                                  </button>
+                                  <button onClick={() => handleSendReminder(d)} disabled={remindingId === d.id}
+                                    className="text-xs text-gray-500 hover:underline disabled:opacity-50">
+                                    {remindingId === d.id ? 'Sending…' : 'Send Reminder'}
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                onClick={() => handleDelete(d)}
+                                disabled={deletingId === d.id || d.checked_in}
+                                title={d.checked_in ? "Already checked in — can't be deleted" : 'Delete this delegate'}
+                                className="text-xs text-red-600 hover:underline disabled:opacity-40 disabled:no-underline"
+                              >
+                                {deletingId === d.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -201,7 +278,7 @@ export default function DelegatesPage() {
                   })}
                   {delegates.length === 0 && (
                     <tr>
-                      <td colSpan={canRecordPayment ? 6 : 5} className="px-4 py-8 text-center text-gray-400">
+                      <td colSpan={canRecordPayment ? 7 : 6} className="px-4 py-8 text-center text-gray-400">
                         No delegates registered yet.
                       </td>
                     </tr>

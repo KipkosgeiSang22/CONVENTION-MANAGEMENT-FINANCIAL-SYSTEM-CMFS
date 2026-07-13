@@ -379,8 +379,8 @@ class ConventionCloseView(APIView):
 
     def post(self, request, pk):
         user = request.auth_user
-        if user.role not in ('super_admin', 'national_head', 'regional_head', 'county_head'):
-            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+        if user.role not in ('super_admin', 'national_head'):
+            return Response({'error': 'Financial close is restricted to Super Admin and National Head.', 'code': 'forbidden'}, status=403)
 
         try:
             convention = Convention.objects.get(pk=pk)
@@ -393,8 +393,10 @@ class ConventionCloseView(APIView):
                 status=400,
             )
 
-        if not user_can_manage_convention(user, convention):
-            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+        # Note: unlike other transitions, National Head can close ANY
+        # convention here (not just national-scope ones) — financial close
+        # locks the entire convention across every ConventionUnit, so
+        # user_can_manage_convention's scope-matching doesn't apply.
 
         # TOTP verification required
         totp_code = request.data.get('totp_code', '').strip()
@@ -419,11 +421,16 @@ class ConventionCloseView(APIView):
             ip=get_client_ip(request),
         )
 
-        # Trigger background report generation and distribution
-        tasks.generate_final_reports(convention.id)
+        # Generates final reports synchronously (so they're downloadable
+        # immediately), then queues one background email task per
+        # recipient — each with only the report file(s) they're entitled
+        # to see attached (Super Admin gets everything; each head/finance
+        # viewer gets only their own unit's reports).
+        tasks.generate_final_reports(convention.id, triggered_by=user.id)
 
         return Response({
-            'message': f'Convention "{convention.name}" is now FINANCIALLY CLOSED. Final reports are being generated.',
+            'message': f'Convention "{convention.name}" is now FINANCIALLY CLOSED. '
+                       f'Final reports have been generated and are being emailed to all heads.',
             'convention': ConventionDetailSerializer(convention).data,
         })
 
@@ -510,28 +517,28 @@ class ConventionOpeningDayReportsView(APIView):
 # ── Geography endpoints (for wizard dropdowns) ─────────────────────────────────
 
 class CountyListView(APIView):
-    """GET /api/conventions/counties/ — all counties with region info."""
+    """
+    GET /api/conventions/counties/ — all counties with region info.
+    Open to any authenticated role (not just heads): budget_creator,
+    finance_viewer, and gate_official also need this — e.g. a region-scoped
+    budget_creator must pick which county within their region a manually
+    registered delegate belongs to. This is non-sensitive static geography
+    data (county names), already exposed unauthenticated via the delegate
+    self-registration options endpoint, so widening this is safe.
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.auth_user
-        if user.role not in HEAD_ROLES:
-            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
-
         counties = County.objects.select_related('region').order_by('name')
         serializer = CountySerializer(counties, many=True)
         return Response({'counties': serializer.data})
 
 
 class RegionListView(APIView):
-    """GET /api/conventions/regions/ — all regions."""
+    """GET /api/conventions/regions/ — all regions. Open to any authenticated role (see CountyListView)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.auth_user
-        if user.role not in HEAD_ROLES:
-            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
-
         regions = Region.objects.order_by('name')
         serializer = RegionSerializer(regions, many=True)
         return Response({'regions': serializer.data})

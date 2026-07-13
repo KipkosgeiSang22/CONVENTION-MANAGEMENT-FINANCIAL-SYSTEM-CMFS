@@ -566,9 +566,38 @@ class InviteUserView(APIView):
         region_id = data.get('region_id')
 
         if caller.role == 'super_admin':
-            # Super Admin: county_id/region_id passed through as-is
-            # (only meaningful for head roles).
-            pass
+            # Super Admin: county_id/region_id passed through as-is,
+            # but a head role MUST get its matching scope — otherwise the
+            # head (and everyone they later invite, who inherits from them)
+            # ends up unscoped and silently sees nothing.
+            if target_role == 'regional_head' and not region_id:
+                return Response({
+                    'error': 'region_id is required when creating a regional_head.',
+                    'code': 'missing_field',
+                }, status=400)
+
+            if target_role == 'county_head' and not county_id:
+                return Response({
+                    'error': 'county_id is required when creating a county_head.',
+                    'code': 'missing_field',
+                }, status=400)
+
+            if region_id:
+                from conventions.models import Region
+                if not Region.objects.filter(pk=region_id).exists():
+                    return Response({'error': 'Region not found.', 'code': 'not_found'}, status=400)
+
+            if county_id:
+                from conventions.models import County
+                try:
+                    county = County.objects.get(pk=county_id)
+                except County.DoesNotExist:
+                    return Response({'error': 'County not found.', 'code': 'not_found'}, status=400)
+                # If both are supplied for a county_head, lock region to the
+                # county's actual region rather than trusting two independent
+                # form fields to agree with each other.
+                if target_role == 'county_head':
+                    region_id = county.region_id
 
         elif target_role in self.OPERATIONAL_ROLES:
             # ── Operational staff invited by any head role ─────────────────────

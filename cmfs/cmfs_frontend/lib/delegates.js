@@ -37,6 +37,18 @@ export async function sendPaymentReminder(delegateId) {
   return api.post(`/api/delegates/${delegateId}/send-reminder/`, {});
 }
 
+/**
+ * DELETE /api/delegates/{delegateId}/delete/ — Budget Creator or above.
+ * For fixing a mis-keyed registration. Rejected (400) once the delegate
+ * has checked in at the gate or has a write-off on file — use Write-Off
+ * for a real outstanding balance instead. `delegateId` here is the
+ * Delegate ID code (e.g. KER-STU-2026-0042); a numeric row id also works
+ * for PENDING registrations that never got a code assigned.
+ */
+export async function deleteDelegate(delegateId) {
+  return api.del(`/api/delegates/${delegateId}/delete/`);
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 /** Builds the absolute URL for a delegate's QR code PNG (qr_code_path is MEDIA_URL-relative, e.g. "/media/qr_codes/KER-STU-2026-0042.png"). */

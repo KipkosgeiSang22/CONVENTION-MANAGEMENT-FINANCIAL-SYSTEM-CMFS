@@ -61,6 +61,8 @@ export default function InviteUserModal({ callerRole, counties = [], regions = [
     if (!form.full_name.trim()) return setError('Full name is required.');
     if (!form.email.trim())     return setError('Email is required.');
     if (!form.role)             return setError('Role is required.');
+    if (needsRegion && !form.region_id) return setError('Region is required.');
+    if (needsCounty && !form.county_id) return setError('County is required.');
 
     const payload = {
       full_name: form.full_name.trim(),

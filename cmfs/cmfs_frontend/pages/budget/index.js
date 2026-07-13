@@ -16,7 +16,7 @@ import InactivityGuard from '../../components/InactivityGuard';
 import {
   getMyUnits, getPreloadedExpenseItems, listBudgetIncome, saveBudgetIncome,
   deleteBudgetIncome, listBudgetExpenses, addBudgetExpense, deleteBudgetExpense,
-  getBudgetSummary, INCOME_CATEGORIES, fmtKES,
+  getBudgetSummary, recordBudgetIncomeActual, INCOME_CATEGORIES, fmtKES,
 } from '../../lib/budget';
 
 export default function BudgetPage() {
@@ -89,6 +89,14 @@ export default function BudgetPage() {
               Read-only
             </span>
           )}
+          <div className="ml-auto flex items-center gap-4">
+            <Link href="/budget/actuals" className="text-sm text-blue-600 hover:underline">
+              Actual Expenses →
+            </Link>
+            <Link href="/budget/outstanding" className="text-sm text-blue-600 hover:underline">
+              Outstanding Payments →
+            </Link>
+          </div>
         </div>
 
         <div className="max-w-5xl mx-auto px-6 py-6">
@@ -178,7 +186,9 @@ function SurplusDeficitBar({ summary }) {
 
 function IncomeSection({ unitId, incomes, canEdit, onChange }) {
   const [saving, setSaving] = useState(null);
+  const [savingActual, setSavingActual] = useState(null);
   const [form, setForm] = useState({});
+  const [actualForm, setActualForm] = useState({});
 
   function byCategory(cat) {
     return incomes.find(i => i.category === cat);
@@ -195,6 +205,20 @@ function IncomeSection({ unitId, incomes, canEdit, onChange }) {
     if (res.ok) onChange();
   }
 
+  // offering/exhibition aren't tied to any delegate/payment, so — unlike
+  // student/kessat/associate, whose actuals are always computed live from
+  // confirmed payments — there's no automatic way to know what was actually
+  // collected. Whoever counts the offering/exhibition takings records it here.
+  async function handleSaveActual(cat) {
+    const existing = byCategory(cat);
+    if (!existing) return;
+    const value = actualForm[cat] ?? existing.actual_total ?? 0;
+    setSavingActual(cat);
+    const res = await recordBudgetIncomeActual(existing.id, value);
+    setSavingActual(null);
+    if (res.ok) onChange();
+  }
+
   const total = incomes.reduce((s, i) => s + Number(i.estimated_total || 0), 0);
 
   return (
@@ -205,7 +229,7 @@ function IncomeSection({ unitId, incomes, canEdit, onChange }) {
           const existing = byCategory(value);
           const isFreeText = value === 'offering' || value === 'exhibition';
           return (
-            <div key={value} className="flex items-center gap-2">
+            <div key={value} className="flex items-center gap-2 flex-wrap">
               <span className="w-24 text-sm text-gray-600">{label}</span>
               {isFreeText ? (
                 <input
@@ -235,6 +259,29 @@ function IncomeSection({ unitId, incomes, canEdit, onChange }) {
                 >
                   {saving === value ? '…' : 'Save'}
                 </button>
+              )}
+
+              {/* Actual collected — offering/exhibition only, once the line exists */}
+              {isFreeText && existing && (
+                <div className="w-full flex items-center gap-2 pl-24">
+                  <span className="text-xs text-gray-400 w-20">Actual:</span>
+                  <input
+                    type="number" min="0" disabled={!canEdit}
+                    placeholder="Actual collected (KES)"
+                    defaultValue={existing?.actual_total ?? ''}
+                    onChange={e => setActualForm(f => ({ ...f, [value]: e.target.value }))}
+                    className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm disabled:bg-gray-50"
+                  />
+                  {canEdit && (
+                    <button
+                      onClick={() => handleSaveActual(value)}
+                      disabled={savingActual === value}
+                      className="text-xs bg-gray-700 text-white px-2 py-1 rounded hover:bg-gray-800 disabled:opacity-50"
+                    >
+                      {savingActual === value ? '…' : 'Record Actual'}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           );

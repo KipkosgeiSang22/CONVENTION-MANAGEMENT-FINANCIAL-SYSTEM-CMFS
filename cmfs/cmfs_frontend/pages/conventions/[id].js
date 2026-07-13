@@ -7,8 +7,10 @@ import useAuth from '../../lib/useAuth';
 import {
   getConvention, publishConvention, activateConvention, endConvention,
   closeConventionFinancially, archiveConvention, triggerOpeningDayReports,
+  generateReportsDev,
   STATUS_LABELS, STATUS_COLORS, getAvailableTransitions,
 } from '../../lib/conventions';
+import { listReports, downloadReport } from '../../lib/reports';
 
 export default function ConventionDetailPage() {
   const router = useRouter();
@@ -21,6 +23,12 @@ export default function ConventionDetailPage() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Reports
+  const [reports, setReports] = useState([]);
+  const [loadingReports, setLoadingReports] = useState(false);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [generatingDev, setGeneratingDev] = useState(false);
+
   // Modals
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -32,7 +40,7 @@ export default function ConventionDetailPage() {
   const [totpCode, setTotpCode] = useState('');
 
   useEffect(() => {
-    if (id && user) fetchConvention();
+    if (id && user) { fetchConvention(); fetchReports(); }
   }, [id, user]);
 
   async function fetchConvention() {
@@ -45,6 +53,42 @@ export default function ConventionDetailPage() {
       setError(err.message);
     } finally {
       setLoadingConv(false);
+    }
+  }
+
+  async function fetchReports() {
+    setLoadingReports(true);
+    try {
+      const res = await listReports(id);
+      if (res.ok) setReports(res.data.reports || []);
+    } finally {
+      setLoadingReports(false);
+    }
+  }
+
+  async function handleDownload(reportId) {
+    setError(''); setDownloadingId(reportId);
+    try {
+      const res = await downloadReport(reportId);
+      if (!res.ok) throw new Error(res.data?.error || 'Download failed.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  async function handleDevGenerate() {
+    setError(''); setSuccessMsg(''); setGeneratingDev(true);
+    try {
+      const res = await generateReportsDev(id, 'final');
+      if (!res.ok) throw new Error(res.data?.error || 'Report generation failed.');
+      setSuccessMsg(res.data.message || 'Reports generated.');
+      await fetchReports();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGeneratingDev(false);
     }
   }
 
@@ -80,6 +124,7 @@ export default function ConventionDetailPage() {
       setSuccessMsg(res.data.message || 'Convention financially closed.');
       if (res.data.convention) setConvention(res.data.convention);
       else await fetchConvention();
+      await fetchReports();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -213,6 +258,70 @@ export default function ConventionDetailPage() {
           </div>
         )}
 
+        {/* Reports */}
+        <div className="bg-white border border-gray-200 rounded-lg p-5">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Reports</h2>
+            {user.role === 'super_admin' && (
+              <button onClick={handleDevGenerate} disabled={generatingDev}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50">
+                {generatingDev ? 'Generating…' : '⚙ Generate Reports Now (test)'}
+              </button>
+            )}
+          </div>
+          {user.role === 'super_admin' && (
+            <p className="text-xs text-gray-400 mb-4">
+              Dev/testing tool — generates the full report set right now, at any convention status,
+              without going through financial close. Not shown to other roles.
+            </p>
+          )}
+
+          {loadingReports ? (
+            <p className="text-sm text-gray-400">Loading reports…</p>
+          ) : reports.length === 0 ? (
+            <p className="text-sm text-gray-400">No reports generated yet.</p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {reports
+                .filter(r => r.convention_unit_id === null)
+                .concat(reports.filter(r => r.convention_unit_id !== null))
+                .reduce((rows, r) => {
+                  // Group by unit AND report_type — grouping by unit alone
+                  // merged different report batches (e.g. 'opening_day' and
+                  // 'final' reports for the same unit) into a single row,
+                  // which looked like duplicate Download buttons (4 instead
+                  // of 2) once more than one report_type had been generated.
+                  const key = `${r.convention_unit_id ?? 'overall'}::${r.report_type}`;
+                  let group = rows.find(g => g.key === key);
+                  if (!group) { group = { key, label: r.unit_display_name, reportType: r.report_type, items: [] }; rows.push(group); }
+                  group.items.push(r);
+                  return rows;
+                }, [])
+                .map(group => (
+                  <div key={group.key} className="py-3 flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{group.label}</p>
+                      <p className="text-xs text-gray-400 capitalize">
+                        {group.reportType?.replace('_', ' ')}
+                        {group.items.some(r => r.status === 'failed') && (
+                          <span className="text-red-500 ml-2">some files failed</span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      {group.items.filter(r => r.status === 'generated').map(r => (
+                        <button key={r.id} onClick={() => handleDownload(r.id)} disabled={downloadingId === r.id}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                          {downloadingId === r.id ? '…' : `Download ${r.format.toUpperCase()}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+
         {convention.description && (
           <div className="bg-white border border-gray-200 rounded-lg p-5">
             <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Description</h2>
@@ -283,11 +392,18 @@ export default function ConventionDetailPage() {
               </p>
               <input type="text" inputMode="numeric" maxLength={6} placeholder="000000"
                 value={totpCode} onChange={e => setTotpCode(e.target.value.replace(/\D/g, ''))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-3 text-center tracking-widest text-2xl font-mono focus:outline-none focus:ring-2 focus:ring-red-500 mb-4" />
+                disabled={actionLoading}
+                className="w-full border border-gray-300 rounded-lg px-3 py-3 text-center tracking-widest text-2xl font-mono focus:outline-none focus:ring-2 focus:ring-red-500 mb-4 disabled:bg-gray-50" />
+              {actionLoading && (
+                <p className="text-sm text-gray-500 mb-3 flex items-center gap-2">
+                  <span className="inline-block w-3.5 h-3.5 border-2 border-gray-300 border-t-red-600 rounded-full animate-spin" />
+                  Generating final reports and queuing emails to all heads…
+                </p>
+              )}
               {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
               <div className="flex gap-3 justify-end">
-                <button onClick={() => setCloseStep('checklist')}
-                  className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">← Back</button>
+                <button onClick={() => setCloseStep('checklist')} disabled={actionLoading}
+                  className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">← Back</button>
                 <button onClick={handleFinancialClose} disabled={actionLoading || totpCode.length !== 6}
                   className="bg-red-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-50">
                   {actionLoading ? 'Closing…' : 'Close Financially'}

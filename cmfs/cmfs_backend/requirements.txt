@@ -11,3 +11,5 @@ bcrypt>=4.1
 pyotp>=2.9
 qrcode[pil]>=7.4
 django-ratelimit>=4.1
+openpyxl>=3.1
+reportlab>=4.0

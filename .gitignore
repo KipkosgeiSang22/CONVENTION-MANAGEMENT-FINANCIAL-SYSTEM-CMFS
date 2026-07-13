@@ -1,46 +1,15 @@
-# Environment files
-.env
-.env.*
-!.env.example
+# Only cmfs/ is the real project — everything else in this workspace is scratch/clutter
+*
+!cmfs/
+!cmfs/**
+!.gitignore
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.sqlite3
-*.log
-
-# Node/Next.js
-node_modules/
-.next/
-
-# OS files
-.DS_Store
-Thumbs.db# Unrelated projects/scripts — not part of cmfs
-venv/
-cmfs.zip
-cmfs backup/
-app.py
-check.py
-checkcp311_win_amd64.pyx
-event_extraction_app/
-inn.py
-inputs.py
-learn.py
-neuron.py
-predictor.py
-soc-export-app/
-web 2/
-
-# Build artifacts / dependencies
-__pycache__/
-*.pyc
-node_modules/
-.next/
-
-# Secrets — never commit these
+# Inside cmfs/, exclude build artifacts, dependencies, and secrets
+cmfs/cmfs_frontend/node_modules/
+cmfs/cmfs_frontend/.next/
+cmfs/cmfs_backend/media/
+cmfs/cmfs_backend/**/__pycache__/
+cmfs/cmfs_backend/**/*.pyc
 *.env
 .env.local
-media/
 .vscode/

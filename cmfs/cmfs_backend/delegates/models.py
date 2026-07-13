@@ -11,6 +11,13 @@ class Delegate(models.Model):
         ('pending', 'Pending'),
         ('active', 'Active'),
     ]
+    # Phase 9 — set via POST /api/delegates/{id}/chase/, cleared implicitly
+    # once payment_status stops being INCOMPLETE/NOT_PAID (checked at read
+    # time, not enforced here — see delegates.views.ChasePaymentView).
+    CHASE_STATUS_CHOICES = [
+        ('none', 'None'),
+        ('pending_chase', 'Pending Chase'),
+    ]
 
     # e.g. KER-STU-2025-0042 — generated on first confirmed payment.
     # null=True (not default='') is required: every PENDING delegate has no
@@ -42,6 +49,8 @@ class Delegate(models.Model):
     qr_code_path = models.CharField(max_length=255, blank=True, default='')
     registration_date = models.DateTimeField(auto_now_add=True)
     registered_by_id = models.IntegerField(null=True, blank=True)  # null = self-registered
+    chase_status = models.CharField(max_length=20, choices=CHASE_STATUS_CHOICES, default='none')
+    chase_requested_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'delegates'

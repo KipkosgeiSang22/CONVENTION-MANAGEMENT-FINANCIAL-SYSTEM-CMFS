@@ -19,6 +19,12 @@ class BudgetIncome(models.Model):
     estimated_count = models.IntegerField(default=0)
     unit_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     estimated_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # student/kessat/associate actuals are always derived live from confirmed
+    # Payment records (never stored here) — this field exists only for
+    # offering/exhibition, which aren't tied to any Delegate/Payment and so
+    # have no other way to record what was actually collected. Recorded
+    # manually by whoever counts the offering/exhibition takings.
+    actual_total = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     class Meta:
         db_table = 'budget_income'
@@ -36,6 +42,7 @@ class PreloadedExpenseItem(models.Model):
         ('EQUIP', 'Equipment/Logistics'),
         ('TRANS', 'Transport'),
         ('SPEAK', 'Speaker Tokens'),
+        ('APPR', 'Workers & Appreciation'),
         ('SECAD', 'Security & Admin'),
         ('PRINT', 'Stationery/Printing'),
         ('SUPP', 'Support'),

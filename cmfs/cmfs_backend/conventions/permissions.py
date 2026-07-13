@@ -39,7 +39,14 @@ def user_can_view_convention(user, convention):
     if user.role == 'super_admin':
         return True
     if user.role == 'national_head':
-        return True  # National head sees all conventions
+        # Per the Convention Scope / Top Head Role table: National Head is
+        # only involved in NATIONAL-scope conventions ("Regional/National
+        # Heads not involved" in county conventions; "National Head not
+        # involved" in regional conventions). Must match the ConventionList
+        # filter (scope='national') or a national_head could view/act on a
+        # regional or county convention's detail page directly by URL even
+        # though it's hidden from their list.
+        return convention.scope == 'national'
 
     if user.role == 'regional_head':
         return convention.units.filter(region_id=user.region_id).exists()

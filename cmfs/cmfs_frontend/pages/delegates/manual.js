@@ -7,7 +7,7 @@
  * prompt on their behalf.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import useAuth from '../../lib/useAuth';
@@ -23,7 +23,14 @@ export default function ManualRegistrationPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
 
-  const [countyName, setCountyName] = useState('');
+  // Full county list (with region_id on each), used to build the scoped
+  // dropdown below and to resolve county_id -> name for the fixed-county case.
+  const [allCounties, setAllCounties] = useState([]);
+  // The county actually chosen for this registration. Auto-set to
+  // user.county_id when the caller is county-scoped; otherwise the caller
+  // must pick one (region-scoped: limited to their region; national-scoped
+  // budget_creator/finance_viewer/gate_official or a head: any county).
+  const [selectedCountyId, setSelectedCountyId] = useState('');
   const [form, setForm] = useState({
     full_name: '', email: '', category: '', parent_name: '', parent_phone: '',
     accept_terms: false, payment_method: 'cash', amount_received_now: '',
@@ -55,15 +62,39 @@ export default function ManualRegistrationPage() {
   }
 
   useEffect(() => {
-    if (!user?.county_id) return;
+    if (!user) return;
     (async () => {
       const res = await listCounties();
-      if (res.ok) {
-        const county = (res.data.counties || res.data || []).find(c => c.id === user.county_id);
-        if (county) setCountyName(county.name);
+      if (!res.ok) return;
+      const counties = res.data.counties || res.data || [];
+      setAllCounties(counties);
+      // County-scoped caller (budget_creator/head with county_id): fixed,
+      // no picking needed.
+      if (user.county_id) {
+        setSelectedCountyId(user.county_id);
       }
+      // Region-scoped or national-scoped callers leave selectedCountyId
+      // empty so the dropdown below forces an explicit choice — sending
+      // county_id straight from user.county_id would be null/undefined
+      // for them and the backend correctly rejects that.
     })();
   }, [user]);
+
+  // Counties the current caller is allowed to register a delegate for.
+  const countyOptions = useMemo(() => {
+    if (!user) return [];
+    if (user.county_id) {
+      return allCounties.filter(c => c.id === user.county_id);
+    }
+    if (user.region_id) {
+      return allCounties.filter(c => c.region_id === user.region_id);
+    }
+    // National-scoped (super_admin, national_head, or staff invited by one)
+    return allCounties;
+  }, [user, allCounties]);
+
+  const needsCountyPicker = !!user && !user.county_id;
+  const countyName = allCounties.find(c => c.id === Number(selectedCountyId))?.name || '';
 
   function set(field, value) {
     setForm(f => ({ ...f, [field]: value }));
@@ -74,11 +105,17 @@ export default function ManualRegistrationPage() {
     e.preventDefault();
     setBanner('');
     setFieldErrors({});
+
+    if (!selectedCountyId) {
+      setBanner('Select a county for this delegate.');
+      return;
+    }
+
     setSubmitting(true);
 
     const res = await manualRegister({
       ...form,
-      county_id: user.county_id,
+      county_id: Number(selectedCountyId),
       amount_received_now: Number(form.amount_received_now),
     });
 
@@ -175,9 +212,30 @@ export default function ManualRegistrationPage() {
                 <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{banner}</div>
               )}
 
-              <p className="text-xs text-gray-400 uppercase tracking-wide">
-                Registering for: <span className="font-medium text-gray-600">{countyName || `County #${user.county_id}`}</span>
-              </p>
+              {needsCountyPicker ? (
+                <Field label="County">
+                  <select
+                    required
+                    value={selectedCountyId}
+                    onChange={e => setSelectedCountyId(e.target.value)}
+                    className="input"
+                  >
+                    <option value="" disabled>Select county…</option>
+                    {countyOptions.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {user.region_id
+                      ? 'Choose which county within your region this delegate belongs to.'
+                      : 'Choose the delegate\'s county.'}
+                  </p>
+                </Field>
+              ) : (
+                <p className="text-xs text-gray-400 uppercase tracking-wide">
+                  Registering for: <span className="font-medium text-gray-600">{countyName || `County #${user.county_id}`}</span>
+                </p>
+              )}
 
               <Field label="Delegate Full Name" error={err('full_name')}>
                 <input required value={form.full_name} onChange={e => set('full_name', e.target.value)} className="input" />
@@ -221,7 +279,7 @@ export default function ManualRegistrationPage() {
               </label>
               {err('accept_terms') && <p className="text-xs text-red-600">{err('accept_terms')}</p>}
 
-              <button type="submit" disabled={submitting}
+              <button type="submit" disabled={submitting || (needsCountyPicker && !selectedCountyId)}
                 className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 disabled:opacity-50">
                 {submitting ? 'Submitting…' : 'Register Delegate'}
               </button>

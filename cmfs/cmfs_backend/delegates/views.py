@@ -1,6 +1,6 @@
 """
 FILE: cmfs/cmfs_backend/delegates/views.py
-ACTION: CREATE (Phase 6)
+ACTION: MODIFY (Phase 9 additions)
 
 Endpoints:
   GET  /api/delegates/register/options/          — participating counties (public)
@@ -9,6 +9,8 @@ Endpoints:
   POST /api/delegates/manual/                     — Budget Creator manual registration
   GET  /api/delegates/{delegate_id}/              — delegate status page (public, via email link)
   GET  /api/delegates/{delegate_id}/qr/            — direct QR download (public, TEMP fallback — see Phase 7 addendum)
+  POST /api/delegates/{delegate_id}/chase/        — mark "Pending Chase" + queue reminder (Phase 9)
+  POST /api/delegates/{delegate_id}/write-off/    — TOTP-confirmed, irreversible (Phase 9)
   GET  /api/units/{unit_id}/delegates/            — Budget Creator delegate list
   GET  /api/units/{unit_id}/delegates/summary/    — County Head summary counts
 """
@@ -16,6 +18,8 @@ Endpoints:
 import uuid
 import logging
 
+from django.db import transaction
+from django.utils import timezone as dj_tz
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 from rest_framework.views import APIView
@@ -23,14 +27,17 @@ from rest_framework.response import Response
 from django_q.tasks import async_task
 from django.db import IntegrityError
 
-from auth_app.utils import get_client_ip
-from auth_app.permissions import IsAuthenticated, IsFinanceViewerOrAbove, IsBudgetCreatorOrAbove, user_can_access_unit
+from auth_app.utils import get_client_ip, verify_totp_code
+from auth_app.permissions import (
+    IsAuthenticated, IsFinanceViewerOrAbove, IsBudgetCreatorOrAbove, IsCountyHeadOrAbove,
+    user_can_access_unit, user_can_access_county,
+)
 from auth_app.audit import log as audit_log
 from conventions.models import County, ConventionUnit
 
-from .models import Delegate
-from .serializers import PublicRegistrationSerializer, ManualRegistrationSerializer, DelegateSerializer
-from .utils import resolve_convention_for_county
+from .models import Delegate, WriteOff
+from .serializers import PublicRegistrationSerializer, ManualRegistrationSerializer, DelegateSerializer, WriteOffSerializer
+from .utils import resolve_convention_for_county, resolve_unit_for_delegate
 from payments.models import Payment
 from payments.services import confirm_payment
 
@@ -195,8 +202,20 @@ class ManualRegistrationView(APIView):
         county = County.objects.get(pk=data['county_id'])
 
         user = request.auth_user
-        if user.county_id and user.county_id != county.id:
-            return Response({'error': 'You can only register delegates for your own county.', 'code': 'forbidden'}, status=403)
+        # Scope check — mirrors user_can_access_county, but explicit here
+        # since a bad/omitted county_id must never silently fall through.
+        # budget_creator/finance_viewer/gate_official (and heads) carry
+        # EITHER county_id (county-scoped) OR region_id (region-scoped, no
+        # county_id) OR neither (national-scoped) — never assume county_id
+        # is always present.
+        if user.county_id:
+            if user.county_id != county.id:
+                return Response({'error': 'You can only register delegates for your own county.', 'code': 'forbidden'}, status=403)
+        elif user.region_id:
+            if county.region_id != user.region_id:
+                return Response({'error': 'That county is outside your region.', 'code': 'forbidden'}, status=403)
+        # else: national-scoped (super_admin, national_head, or staff invited
+        # by a national_head) — any county is in scope.
 
         convention, unit = resolve_convention_for_county(county)
         if not convention:
@@ -350,6 +369,223 @@ class SendPaymentReminderView(APIView):
         return Response({'message': f'Reminder queued for {delegate.full_name}.'})
 
 
+# ── Chase payment (County Head or above, Phase 9) ───────────────────────────────
+
+class ChasePaymentView(APIView):
+    """
+    POST /api/delegates/{delegate_id}/chase/
+    Marks a delegate "Pending Chase" and queues the same reminder email
+    task built in Phase 7 — chasing is just a formal escalation flag on
+    top of an ordinary reminder, not a separate email template.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, delegate_id):
+        if not IsCountyHeadOrAbove().has_permission(request, self):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        try:
+            delegate = Delegate.objects.get(delegate_id=delegate_id)
+        except Delegate.DoesNotExist:
+            return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
+
+        if not user_can_access_county(request.auth_user, delegate.county_id):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        if delegate.balance_owed <= 0:
+            return Response(
+                {'error': 'This delegate has no outstanding balance.', 'code': 'no_balance'}, status=400,
+            )
+
+        delegate.chase_status = 'pending_chase'
+        delegate.chase_requested_at = dj_tz.now()
+        delegate.save(update_fields=['chase_status', 'chase_requested_at'])
+
+        async_task('delegates.tasks.send_payment_reminder_task', delegate.id)
+
+        audit_log(
+            user=request.auth_user, action='payment_chase_started',
+            detail=f'Delegate {delegate.delegate_id} marked Pending Chase; reminder queued',
+            ip=get_client_ip(request),
+        )
+
+        return Response({
+            'message': f'{delegate.full_name} marked Pending Chase; reminder queued.',
+            'delegate_id': delegate.delegate_id,
+            'chase_status': delegate.chase_status,
+        })
+
+
+# ── Write-off (County Head or above, TOTP-confirmed, irreversible, Phase 9) ─────
+
+class WriteOffView(APIView):
+    """
+    POST /api/delegates/{delegate_id}/write-off/
+    body: {"reason": "...", "totp_code": "123456"}
+
+    Writes off the delegate's ENTIRE current outstanding balance. Requires
+    the caller's own TOTP code (same "prove it's really you" pattern as
+    ConventionCloseView) and a non-blank reason. There is no undo endpoint
+    for this — see WriteOffDetailView below, which exists purely to say
+    so explicitly rather than 404ing.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, delegate_id):
+        if not IsCountyHeadOrAbove().has_permission(request, self):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        user = request.auth_user
+        try:
+            delegate = Delegate.objects.select_related('convention', 'county').get(delegate_id=delegate_id)
+        except Delegate.DoesNotExist:
+            return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
+
+        if not user_can_access_county(user, delegate.county_id):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        # Reason is validated before TOTP — an empty-reason request should
+        # fail the same way regardless of whether a TOTP code was ever
+        # supplied, per the Phase 9 gate tests (#8 vs #9 check each in
+        # isolation, not which one wins when both are missing).
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'error': 'Reason is required.', 'code': 'reason_required'}, status=400)
+
+        totp_code = (request.data.get('totp_code') or '').strip()
+        if not totp_code:
+            return Response({'error': 'TOTP confirmation required.', 'code': 'totp_required'}, status=403)
+        if not user.totp_enabled or not user.totp_secret:
+            return Response({'error': 'Your account does not have TOTP enabled.', 'code': 'totp_not_enabled'}, status=403)
+        if not verify_totp_code(user.totp_secret, totp_code):
+            return Response({'error': 'Invalid TOTP code.', 'code': 'invalid_totp'}, status=403)
+
+        balance = delegate.balance_owed
+        if balance <= 0:
+            return Response(
+                {'error': 'This delegate has no outstanding balance to write off.', 'code': 'no_balance'}, status=400,
+            )
+
+        unit = resolve_unit_for_delegate(delegate)
+        if not unit:
+            return Response(
+                {'error': 'No convention unit covers this delegate.', 'code': 'not_found'}, status=400,
+            )
+
+        write_off = WriteOff.objects.create(
+            delegate=delegate,
+            convention_unit=unit,
+            amount_written_off=balance,
+            reason=reason,
+            written_off_by_id=user.id,
+            written_off_by_name=user.full_name,
+            totp_confirmed=True,
+        )
+
+        # Chasing this delegate further is now moot.
+        if delegate.chase_status != 'none':
+            delegate.chase_status = 'none'
+            delegate.save(update_fields=['chase_status'])
+
+        audit_log(
+            user=user, action='delegate_written_off',
+            detail=f'Wrote off KES {balance} for delegate {delegate.delegate_id}: {reason}',
+            ip=get_client_ip(request),
+        )
+
+        return Response({'write_off': WriteOffSerializer(write_off).data}, status=201)
+
+
+class DeleteDelegateView(APIView):
+    """
+    DELETE /api/delegates/{delegate_id}/delete/
+    Budget Creator or above. For fixing a mis-keyed registration (wrong
+    name, wrong category, duplicate entry, etc.) — not a substitute for
+    Write-Off, which is for forgiving a real outstanding balance without
+    erasing the delegate's record.
+
+    Deliberately blocked once real event-day state exists:
+      - already checked in at the gate (that attendance record is real
+        history, not a data-entry mistake)
+      - has a write-off on file (an irreversible financial record already
+        points at this delegate)
+    Any Payment rows are removed together with the delegate in the same
+    transaction — Payment.delegate is on_delete=PROTECT, so a plain
+    delegate.delete() would otherwise fail with a 500 the moment any
+    payment (even a failed/initiated one) exists.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, delegate_id):
+        if not IsBudgetCreatorOrAbove().has_permission(request, self):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        try:
+            delegate = Delegate.objects.select_related('convention', 'county').get(delegate_id=delegate_id)
+        except Delegate.DoesNotExist:
+            # Manually-registered delegates without a confirmed payment yet
+            # have no delegate_id (it's only assigned on first confirmed
+            # payment) — allow lookup by numeric pk too so a PENDING
+            # registration can still be deleted.
+            if delegate_id.isdigit():
+                try:
+                    delegate = Delegate.objects.select_related('convention', 'county').get(pk=int(delegate_id))
+                except Delegate.DoesNotExist:
+                    return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
+            else:
+                return Response({'error': 'Delegate not found.', 'code': 'not_found'}, status=404)
+
+        if not user_can_access_county(request.auth_user, delegate.county_id):
+            return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
+
+        attendance = getattr(delegate, 'attendance', None)
+        if attendance and attendance.checked_in:
+            return Response(
+                {
+                    'error': 'This delegate has already been checked in at the gate and cannot be deleted. '
+                              'Use Write-Off if this is a payment issue.',
+                    'code': 'already_checked_in',
+                },
+                status=400,
+            )
+
+        if delegate.write_offs.exists():
+            return Response(
+                {'error': 'This delegate has a write-off on record and cannot be deleted.', 'code': 'has_write_off'},
+                status=400,
+            )
+
+        name = delegate.full_name
+        delegate_code = delegate.delegate_id
+        email = delegate.email
+
+        with transaction.atomic():
+            delegate.payments.all().delete()
+            if attendance:
+                attendance.delete()
+            delegate.delete()
+
+        audit_log(
+            user=request.auth_user, action='delegate_deleted',
+            detail=f'Deleted delegate {name} ({delegate_code or "PENDING"}, {email})',
+            ip=get_client_ip(request),
+        )
+
+        return Response({'message': f'{name} deleted.'})
+
+
+class WriteOffDetailView(APIView):
+    """
+    DELETE /api/write-offs/{id}/ — always rejected. Write-offs are
+    permanent by design; this endpoint exists so attempting to undo one
+    gets an explicit, informative answer instead of a bare 404.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        return Response({'error': 'Write-offs are irreversible.', 'code': 'irreversible'}, status=400)
+
+
 # ── Staff delegate list / summary ───────────────────────────────────────────────
 
 class UnitDelegatesListView(APIView):
@@ -368,7 +604,7 @@ class UnitDelegatesListView(APIView):
         if not user_can_access_unit(request.auth_user, unit):
             return Response({'error': 'Forbidden.', 'code': 'forbidden'}, status=403)
 
-        qs = Delegate.objects.filter(convention=unit.convention)
+        qs = Delegate.objects.filter(convention=unit.convention).select_related('attendance')
         if unit.scope_type == 'county':
             qs = qs.filter(county=unit.county)
         elif unit.scope_type == 'regional':
