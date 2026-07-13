@@ -39,13 +39,12 @@ def _set_refresh_cookie(response, token: str):
         token,
         max_age=COOKIE_MAX_AGE,
         httponly=True,
-        samesite='Lax',
-        secure=not settings.DEBUG,
+        samesite='None',
+        secure=True,   # required whenever samesite='None'
     )
 
-
 def _clear_refresh_cookie(response):
-    response.delete_cookie(REFRESH_COOKIE)
+    response.delete_cookie(REFRESH_COOKIE, samesite='None', secure=True)
 
 
 def _issue_tokens(user, response_data: dict, response):
