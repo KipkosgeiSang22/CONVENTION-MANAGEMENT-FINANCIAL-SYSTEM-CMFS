@@ -36,6 +36,7 @@ MIDDLEWARE = [
     'payments.middleware.MpesaIPWhitelistMiddleware', 
     'auth_app.middleware.JWTAuthMiddleware', 
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -84,6 +85,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
@@ -145,7 +148,7 @@ JWT_ACCESS_TOKEN_EXPIRY_MINUTES = 15
 JWT_REFRESH_TOKEN_EXPIRY_DAYS = 7
 
 # Frontend
-FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+FRONTEND_URL = config('FRONTEND_URL')
 
 CACHES = {
     'default': {
