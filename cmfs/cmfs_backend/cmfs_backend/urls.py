@@ -8,7 +8,10 @@ urlpatterns = [
     path('api/', include('cmfs_backend.api_urls')),
 ]
 
-# Phase 7: serve /media/qr_codes/... locally. In production this should
-# be handled by the web server / object storage, not Django.
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serves /media/qr_codes/..., /media/reports/... etc. This is an acceptable
+# stopgap for a moderate-traffic deployment without external object storage
+# (S3, Cloudinary, etc.) configured. It requires MEDIA_ROOT to sit on a
+# persistent disk in production — Render's default filesystem is ephemeral
+# and wipes on every deploy/restart, which would silently delete every
+# generated QR code and report between deploys otherwise.
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
